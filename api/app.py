@@ -1,4 +1,4 @@
-import base64
+import asyncio
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
@@ -9,7 +9,6 @@ import api.utils as utils
 class DataManager:
     def __init__(self):
         self.__google_flow = utils.AuthFlowGoogle()
-        self.__google_token = None
         self.__token_manager_api = utils.JWTManager()
 
     @property
@@ -23,6 +22,10 @@ class DataManager:
 app = FastAPI()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl='token')
 data_store = DataManager()
+
+@app.get("/")
+def close_tab():
+    return {'command': "You may now close this tab as authentication is complete"}
 
 @app.get("/auth/login")
 def login():
@@ -40,44 +43,50 @@ def callback(code: str):
     flow.fetch_token(code=code)
     creds = flow.credentials
     data_store.token_manager_api.create_jwt_token({'access_token': creds.token})
-    return {'api_token': data_store.token_manager_api.token}
+    return RedirectResponse('http://localhost:8000/')
 
 @app.get("/token")
-def get_api_token():
-    return {'api_token': data_store.token_manager_api.token}
+async def get_api_token():
+    if not data_store.token_manager_api.token:
+        try:
+            await asyncio.wait_for(
+                data_store.token_manager_api.token_event.wait(),
+                timeout=120
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408, detail="Token not available yet")
+
+    return {"api_token": data_store.token_manager_api.token}
+
+@app.get("/labels")
+def get_labels(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = data_store.token_manager_api.verify_jwt_token(token)
+        google_token = payload.get('access_token')
+        headers = {"Authorization": f"Bearer {google_token}"}
+
+        resp = requests.get(
+            'https://gmail.googleapis.com/gmail/v1/users/me/labels',
+            headers=headers
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        return {"Exception": e}
 
 @app.get("/emails")
-def get_emails(token: str = Depends(oauth2_scheme)):
-    # Expects encoded token with private key
-    try:
-        google_token = data_store.token_manager_api.verify_jwt_token(token)
-        headers = {
-            'Authorization': f"Bearer {google_token['access_token']}"
-        }
-        response = requests.get("https://gmail.googleapis.com/gmail/v1/users/me/messages", headers=headers)
-        response.raise_for_status()
-    except HTTPException as e:
-        raise e
-    except AssertionError as e:
-        raise e
-    
-    return response.json()
-
-
-@app.get("/fetch_emails")
 def get_emails(token: str = Depends(oauth2_scheme)):
     try:
         # Decode API token to get Google OAuth access token
         payload = data_store.token_manager_api.verify_jwt_token(token)
         google_token = payload.get("access_token")
-
         headers = {"Authorization": f"Bearer {google_token}"}
 
         # Step 1: Fetch message list
         resp = requests.get(
             "https://gmail.googleapis.com/gmail/v1/users/me/messages",
             headers=headers,
-            params={"maxResults": 5}  # limit to first 5 emails for demo
+            params={"maxResults": 5}
         )
         resp.raise_for_status()
         messages = resp.json().get("messages", [])
@@ -103,16 +112,6 @@ def get_emails(token: str = Depends(oauth2_scheme)):
 
             labels = detail.get("labelIds", [])
 
-            # Extract plain-text body if available
-            body = ""
-            if "parts" in payload:
-                for part in payload["parts"]:
-                    if part["mimeType"] == "text/plain" and "data" in part["body"]:
-                        body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="ignore")
-                        break
-            elif "data" in payload.get("body", {}):
-                body = base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="ignore")
-
             # Attachments metadata
             attachments = []
             if "parts" in payload:
@@ -121,8 +120,7 @@ def get_emails(token: str = Depends(oauth2_scheme)):
                         attachments.append({
                             "filename": part["filename"],
                             "mimeType": part.get("mimeType"),
-                            "size": part.get("body", {}).get("size"),
-                            "attachmentId": part.get("body", {}).get("attachmentId")
+                            "size": part.get("body", {}).get("size")
                         })
 
             results.append({
@@ -131,12 +129,9 @@ def get_emails(token: str = Depends(oauth2_scheme)):
                 "from": from_,
                 "date": date_,
                 "labels": labels,
-                "snippet": detail.get("snippet", ""),
-                "body": body,
                 "attachments": attachments
             })
 
         return {"emails": results}
-
     except Exception as e:
-        raise e
+        return {"Exception": e}
