@@ -1,68 +1,73 @@
 import webbrowser
-
-import requests
 import streamlit as st
 
-from utils import encode_tok
+from email_agent import Agent
+from utils import encode_tok, GmailClient
 
-# Your FastAPI server
 API_BASE = "http://localhost:8000"
 
 st.set_page_config(page_title="Gmail Fetcher", layout="centered")
-
 st.title("📧 Gmail Fetcher via FastAPI + Streamlit")
-st.markdown("A demo to login with Google and fetch emails.")
+st.markdown("Login with Google, fetch emails, and auto-label them.")
 
-# --- State: keep token
+# --- State ---
 if "api_token" not in st.session_state:
     st.session_state.api_token = None
+if "client" not in st.session_state:
+    st.session_state.client = None
+if "email_labeler" not in st.session_state:
+    st.session_state.email_labeler = None
 
-# --- 1. LOGIN BUTTON ---
+# --- Step 1: Login ---
 st.subheader("Step 1: Login with Google")
 if st.button("🔑 Login with Google", use_container_width=True):
-    # open /auth/login in a new browser tab
     webbrowser.open_new_tab(f"{API_BASE}/auth/login")
-    st.info("A new tab has been opened for Google login. Complete the flow and come back here.")
-    st.session_state.api_token = encode_tok(requests.get('http://localhost:8000/token').json())
+    st.info("A new tab has been opened for Google login. Complete the flow and return here.")
+    token_json = GmailClient(API_BASE, "").get_token()
+    st.session_state.api_token = encode_tok(token_json)
+    st.session_state.client = GmailClient(API_BASE, st.session_state.api_token)
+    st.session_state.email_labeler = Agent()
 
-# --- 2. Enter API Token ---
+# --- Step 2: Token status ---
 st.subheader("Step 2: API Token Status")
-
 if st.session_state.api_token:
     st.success("✅ API Token loaded")
+else:
+    st.warning("No API token found. Please login first.")
 
-# --- 3. FETCH EMAILS ---
-st.subheader("Step 3: Fetch Emails")
-
+# --- Step 3: Fetch + Label ---
+st.subheader("Step 3: Label Emails")
 if st.button("📩 Fetch Emails", use_container_width=True):
     if not st.session_state.api_token:
-        st.error("You need to provide an API token first.")
+        st.error("You need to login first.")
     else:
         try:
-            headers = {"Authorization": f"Bearer {st.session_state.api_token}"}
-            r = requests.get(f"{API_BASE}/emails", headers=headers)
-            if r.status_code == 200:
-                data = r.json()
+            client = st.session_state.client
+            labeler = st.session_state.email_labeler
 
-                # Gmail returns list of message metadata, you may need to fetch each message
-                messages = data.get("emails", [])
-                if not messages:
-                    st.warning("No emails found.")
-                else:
-                    for msg in messages:  # limit to first 5 for demo
-                        msg_id = msg["id"]
-                        subject = msg["subject"]
-                        labels = msg["labels"]
-                        # mimeType, size
-                        attachements = '\n'.join([
-                            f"File Name: {attachment['filename']} - Mime Type: {attachment['mimeType']} - Size: {attachment['size']}"
-                            for attachment in msg["attachments"]
-                        ]) if len(msg['attachments']) > 0 else "No attachments"
-                        st.write("### ✉️", subject)
-                        st.write("**Labels:**", ", ".join(labels))
-                        st.text_area("Attachements", attachements, height=150, key=f"attachments_{msg_id}")
-                        st.divider()
+            label_dict = client.get_labels()
+            messages = client.get_emails()
+
+            if not messages:
+                st.warning("No emails found.")
             else:
-                st.error(f"Error fetching emails: {r.status_code} - {r.text}")
+                for msg in messages[:5]:  # limit for demo
+                    # Skip if email already has matching label
+                    if any(lbl in label_dict.values() for lbl in msg["labels"]):
+                        continue
+
+                    # Generate label
+                    lbl = labeler.generate_label(msg, label_dict.keys())
+                    label_id = label_dict.get(lbl)
+
+                    if label_id:
+                        client.apply_label(msg["id"], label_id)
+                    else:
+                        new_label_id = client.create_label(lbl)
+                        client.apply_label(msg["id"], new_label_id)
+
+                st.divider()
+                st.write("### ✅ All emails labeled successfully")
+
         except Exception as e:
             st.error(f"Exception: {e}")
