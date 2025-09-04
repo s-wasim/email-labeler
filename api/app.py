@@ -33,7 +33,7 @@ def login():
     auth_url, _ = flow.authorization_url(
         access_type="offline",
         prompt="consent",
-        include_granted_scopes="true"
+        include_granted_scopes="false"
     )
     return RedirectResponse(auth_url)
 
@@ -51,7 +51,7 @@ async def get_api_token():
         try:
             await asyncio.wait_for(
                 data_store.token_manager_api.token_event.wait(),
-                timeout=120
+                timeout=300
             )
         except asyncio.TimeoutError:
             raise HTTPException(status_code=408, detail="Token not available yet")
@@ -70,9 +70,48 @@ def get_labels(token: str = Depends(oauth2_scheme)):
             headers=headers
         )
         resp.raise_for_status()
-        return resp.json()
+        labels = resp.json().get('labels')
+        return { 
+            'labels_user': [
+                {'id': label['id'], 'name': label['name']} 
+                for label in labels 
+                if label.get('type') and label['type'] == 'user'
+            ],
+            'labels_system': [
+                {'id': label['id'], 'name': label['name']}
+                for label in labels 
+                if label.get('type') and label['type'] == 'system'
+            ]
+        }
     except Exception as e:
-        return {"Exception": e}
+        return {"Exception": str(e)}
+    
+@app.post("/labels")
+def create_label(new_label_name: str, token: str = Depends(oauth2_scheme)):
+    try:
+        payload = data_store.token_manager_api.verify_jwt_token(token)
+        google_token = payload.get("access_token")
+        headers = {
+            "Authorization": f"Bearer {google_token}",
+            "Content-Type": "application/json"
+        }
+        response = requests.post(
+            "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+            headers=headers,
+            json={
+                "name": new_label_name,
+                "labelListVisibility": "labelShow",
+                "messageListVisibility": "show"
+            }
+        )
+        response.raise_for_status()
+        label_info = response.json()
+        return {
+            "labelId": label_info.get("id"),
+            "name": label_info.get("name")
+        }
+    except Exception as e:
+        return {"Exception": str(e)}
 
 @app.get("/emails")
 def get_emails(token: str = Depends(oauth2_scheme)):
@@ -103,6 +142,7 @@ def get_emails(token: str = Depends(oauth2_scheme)):
             detail_resp.raise_for_status()
             detail = detail_resp.json()
 
+            snipet = detail.get("snipet", "")
             payload = detail.get("payload", {})
             headers_list = payload.get("headers", [])
 
@@ -129,9 +169,35 @@ def get_emails(token: str = Depends(oauth2_scheme)):
                 "from": from_,
                 "date": date_,
                 "labels": labels,
+                "snipet": snipet,
                 "attachments": attachments
             })
 
         return {"emails": results}
     except Exception as e:
-        return {"Exception": e}
+        return {"Exception": str(e)}
+    
+
+@app.post("/emails/{msg_id}/label")
+def assign_label(msg_id: str, label_id: str, token: str = Depends(oauth2_scheme)):
+    try:
+        # Decode API token to get Google OAuth access token
+        payload = data_store.token_manager_api.verify_jwt_token(token)
+        google_token = payload.get("access_token")
+        headers = {"Authorization": f"Bearer {google_token}"}
+
+        # Step 1: Call Gmail API to modify message
+        body = {
+            "addLabelIds": [label_id]
+        }
+
+        resp = requests.post(
+            f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}/modify",
+            headers=headers,
+            json=body
+        )
+        resp.raise_for_status()
+
+        return resp.json()
+    except Exception as e:
+        return {"Exception": str(e)}
