@@ -12,8 +12,9 @@ class GmailClient:
         self.api_base = api_base
         self.headers = {"Authorization": f"Bearer {token}"}
 
-    def get_token(self):
-        return requests.get(f"{self.api_base}/token").json()
+    @staticmethod
+    def get_token(api_base):
+        return requests.get(f"{api_base}/token").json()
 
     def get_labels(self):
         r = requests.get(f"{self.api_base}/labels", headers=self.headers)
@@ -21,10 +22,24 @@ class GmailClient:
         labels = r.json().get("labels_user", [])
         return {lbl["name"]: lbl["id"] for lbl in labels}
 
-    def get_emails(self):
-        r = requests.get(f"{self.api_base}/emails", headers=self.headers)
-        r.raise_for_status()
-        return r.json().get("emails", [])
+    def get_emails(self, pages=1):
+        pages = min(pages, 10000)
+        next_page_token = True
+        params = {'pageToken': "false"}
+        mssgs = []
+        while next_page_token and pages > 0:
+            r = requests.get(
+                f"{self.api_base}/emails",
+                headers=self.headers, 
+                params=params
+            )
+            r.raise_for_status()
+            data = r.json()
+            mssgs.extend(data.get("emails", []))
+            next_page_token = data.get("nextPageToken")
+            params["pageToken"] = next_page_token
+            pages -= 1
+        return mssgs
 
     def apply_label(self, msg_id: str, label_id: str):
         return requests.post(

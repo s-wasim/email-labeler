@@ -114,21 +114,28 @@ def create_label(new_label_name: str, token: str = Depends(oauth2_scheme)):
         return {"Exception": str(e)}
 
 @app.get("/emails")
-def get_emails(token: str = Depends(oauth2_scheme)):
+def get_emails(PageToken:str = 'false', token: str = Depends(oauth2_scheme)):
+    chunk_size = 10
     try:
         # Decode API token to get Google OAuth access token
         payload = data_store.token_manager_api.verify_jwt_token(token)
         google_token = payload.get("access_token")
         headers = {"Authorization": f"Bearer {google_token}"}
 
-        # Step 1: Fetch message list
+        parameters = {
+            "includeSpamTrash": False, 
+            "maxResults": chunk_size,
+        }
+        if PageToken != 'false':
+            parameters['nextPageToken'] = PageToken
         resp = requests.get(
             "https://gmail.googleapis.com/gmail/v1/users/me/messages",
             headers=headers,
-            params={"maxResults": 5}
+            params=parameters
         )
         resp.raise_for_status()
         messages = resp.json().get("messages", [])
+        next_page_token = resp.json().get("nextPageToken", None)
 
         results = []
 
@@ -173,7 +180,7 @@ def get_emails(token: str = Depends(oauth2_scheme)):
                 "attachments": attachments
             })
 
-        return {"emails": results}
+        return {"emails": results, "nextPageToken": next_page_token}
     except Exception as e:
         return {"Exception": str(e)}
     
