@@ -1,15 +1,15 @@
 import asyncio
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
 import requests
 
-import api.utils as utils
+from utils import *
 
 class DataManager:
     def __init__(self):
-        self.__google_flow = utils.AuthFlowGoogle()
-        self.__token_manager_api = utils.JWTManager()
+        self.__google_flow = AuthFlowGoogle()
+        self.__token_manager_api = JWTManager()
 
     @property
     def google_flow(self):
@@ -83,8 +83,16 @@ def get_labels(token: str = Depends(oauth2_scheme)):
                 if label.get('type') and label['type'] == 'system'
             ]
         }
+    except requests.HTTPError as e:
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Gmail API error: {e.response.text}"
+        )
     except Exception as e:
-        return {"Exception": str(e)}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
+        )
     
 @app.post("/labels")
 def create_label(new_label_name: str, token: str = Depends(oauth2_scheme)):
@@ -110,25 +118,40 @@ def create_label(new_label_name: str, token: str = Depends(oauth2_scheme)):
             "labelId": label_info.get("id"),
             "name": label_info.get("name")
         }
+    except requests.HTTPError as e:
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Gmail API error: {e.response.text}"
+        )
     except Exception as e:
-        return {"Exception": str(e)}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
+        )
 
 @app.get("/emails")
-def get_emails(token: str = Depends(oauth2_scheme)):
+def get_emails(PageToken:str = 'false', token: str = Depends(oauth2_scheme)):
+    chunk_size = 10
     try:
         # Decode API token to get Google OAuth access token
         payload = data_store.token_manager_api.verify_jwt_token(token)
         google_token = payload.get("access_token")
         headers = {"Authorization": f"Bearer {google_token}"}
 
-        # Step 1: Fetch message list
+        parameters = {
+            "includeSpamTrash": False, 
+            "maxResults": chunk_size,
+        }
+        if PageToken != 'false':
+            parameters['nextPageToken'] = PageToken
         resp = requests.get(
             "https://gmail.googleapis.com/gmail/v1/users/me/messages",
             headers=headers,
-            params={"maxResults": 5}
+            params=parameters
         )
         resp.raise_for_status()
         messages = resp.json().get("messages", [])
+        next_page_token = resp.json().get("nextPageToken", None)
 
         results = []
 
@@ -173,9 +196,17 @@ def get_emails(token: str = Depends(oauth2_scheme)):
                 "attachments": attachments
             })
 
-        return {"emails": results}
+        return {"emails": results, "nextPageToken": next_page_token}
+    except requests.HTTPError as e:
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Gmail API error: {e.response.text}"
+        )
     except Exception as e:
-        return {"Exception": str(e)}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
+        )
     
 
 @app.post("/emails/{msg_id}/label")
@@ -199,5 +230,13 @@ def assign_label(msg_id: str, label_id: str, token: str = Depends(oauth2_scheme)
         resp.raise_for_status()
 
         return resp.json()
+    except requests.HTTPError as e:
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Gmail API error: {e.response.text}"
+        )
     except Exception as e:
-        return {"Exception": str(e)}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
+        )

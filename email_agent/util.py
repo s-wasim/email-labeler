@@ -11,4 +11,5 @@ Email:
                 for attachment in email_data["attachments"]
             ]) if len(email_data['attachments']) > 0 else "No attachments" }
 Existing Labels: {", ".join(existing_labels)}
+Assign a Label to the above email in AT MOST 3 words. Answer with the Label ALONE and NOTHING ELSE.
 """

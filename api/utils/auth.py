@@ -1,5 +1,5 @@
 from google_auth_oauthlib.flow import Flow
-from api.utils.credentials_manager import SecretManager, SecretName
+from .credentials_manager import SecretManager, SecretName
 
 class AuthFlowGoogle:
     def __init__(self):
