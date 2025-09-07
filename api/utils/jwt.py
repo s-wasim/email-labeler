@@ -1,7 +1,7 @@
 import asyncio
 from jose import jwt
 from datetime import datetime, timedelta, UTC
-from api.utils.credentials_manager import SecretManager, SecretName
+from .credentials_manager import SecretManager, SecretName
 
 class JWTManager:
     def __init__(self, token_expiry_time:int=None):

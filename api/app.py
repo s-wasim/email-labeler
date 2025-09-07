@@ -4,12 +4,12 @@ from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
 import requests
 
-import api.utils as utils
+from utils import *
 
 class DataManager:
     def __init__(self):
-        self.__google_flow = utils.AuthFlowGoogle()
-        self.__token_manager_api = utils.JWTManager()
+        self.__google_flow = AuthFlowGoogle()
+        self.__token_manager_api = JWTManager()
 
     @property
     def google_flow(self):
