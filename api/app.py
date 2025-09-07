@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
 import requests
@@ -83,8 +83,16 @@ def get_labels(token: str = Depends(oauth2_scheme)):
                 if label.get('type') and label['type'] == 'system'
             ]
         }
+    except requests.HTTPError as e:
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Gmail API error: {e.response.text}"
+        )
     except Exception as e:
-        return {"Exception": str(e)}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
+        )
     
 @app.post("/labels")
 def create_label(new_label_name: str, token: str = Depends(oauth2_scheme)):
@@ -110,8 +118,16 @@ def create_label(new_label_name: str, token: str = Depends(oauth2_scheme)):
             "labelId": label_info.get("id"),
             "name": label_info.get("name")
         }
+    except requests.HTTPError as e:
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Gmail API error: {e.response.text}"
+        )
     except Exception as e:
-        return {"Exception": str(e)}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
+        )
 
 @app.get("/emails")
 def get_emails(PageToken:str = 'false', token: str = Depends(oauth2_scheme)):
@@ -181,8 +197,16 @@ def get_emails(PageToken:str = 'false', token: str = Depends(oauth2_scheme)):
             })
 
         return {"emails": results, "nextPageToken": next_page_token}
+    except requests.HTTPError as e:
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Gmail API error: {e.response.text}"
+        )
     except Exception as e:
-        return {"Exception": str(e)}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
+        )
     
 
 @app.post("/emails/{msg_id}/label")
@@ -206,5 +230,13 @@ def assign_label(msg_id: str, label_id: str, token: str = Depends(oauth2_scheme)
         resp.raise_for_status()
 
         return resp.json()
+    except requests.HTTPError as e:
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"Gmail API error: {e.response.text}"
+        )
     except Exception as e:
-        return {"Exception": str(e)}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
+        )
