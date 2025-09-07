@@ -14,7 +14,12 @@ class Agent:
 
         response = ollama.chat(
             model=self.__model,
-            messages=self.__history
+            messages=self.__history,
+            options={
+                "temperature": 0.3,
+                "top_p": 0.95,
+                "repeat_penalty": 1.1
+            }
         )
 
         label = response['message']['content'].strip()
